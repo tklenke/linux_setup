@@ -86,7 +86,7 @@ if $IS_WSL; then
 fi
 
 case "$MACHINE_TYPE" in
-    2) echo ""; echo " Dev server:"; echo "   - Claude Code" ;;
+    2) echo ""; echo " Dev server:"; echo "   - Claude Code"; echo "   - GitHub SSH key (generate if missing, prompt to add to GitHub)" ;;
     3) echo ""; echo " Homelab server:"; echo "   - docker, docker-compose" ;;
     4) echo ""; echo " AWS / cloud server:"; echo "   - docker, docker-compose, nginx, AWS CLI v2" ;;
 esac
@@ -218,6 +218,46 @@ if [ "$MACHINE_TYPE" = "2" ]; then
         log "Installing Claude Code..."
         curl -fsSL https://claude.ai/install.sh | bash
     fi
+
+    # ── GitHub SSH key setup ──────────────────────────────────────────────────
+
+    SSH_KEY="$HOME/.ssh/id_ed25519"
+
+    if [ -f "$SSH_KEY" ]; then
+        ok "SSH key already exists: $SSH_KEY"
+    else
+        log "Generating SSH key for GitHub..."
+        mkdir -p "$HOME/.ssh"
+        chmod 700 "$HOME/.ssh"
+        # Use the git email as the key comment so GitHub shows something meaningful
+        ssh-keygen -t ed25519 -C "$GIT_EMAIL" -f "$SSH_KEY" -N ""
+        log "SSH key generated"
+    fi
+
+    echo ""
+    echo "  ┌─────────────────────────────────────────────────────────────┐"
+    echo "  │  Add this public key to GitHub:                             │"
+    echo "  │  https://github.com/settings/ssh/new                       │"
+    echo "  └─────────────────────────────────────────────────────────────┘"
+    echo ""
+    cat "${SSH_KEY}.pub"
+    echo ""
+    ask "Press Enter once you've added the key to GitHub (or Ctrl+C to skip)..." _PAUSE
+
+    # Verify the key works before trying to use it
+    if ssh -T git@github.com -o StrictHostKeyChecking=accept-new 2>&1 | grep -q "successfully authenticated"; then
+        ok "GitHub SSH authentication confirmed"
+
+        # If the current repo's remote is HTTPS, switch it to SSH
+        CURRENT_REMOTE=$(git remote get-url origin 2>/dev/null || true)
+        if echo "$CURRENT_REMOTE" | grep -q "https://github.com/"; then
+            SSH_REMOTE=$(echo "$CURRENT_REMOTE" | sed 's|https://github.com/|git@github.com:|')
+            git remote set-url origin "$SSH_REMOTE"
+            log "Switched remote origin from HTTPS to SSH: $SSH_REMOTE"
+        fi
+    else
+        log "Could not verify GitHub SSH auth — you may need to add the key and test manually with: ssh -T git@github.com"
+    fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -296,3 +336,9 @@ echo ""
 # Claude Code:
 #   Installed via: curl -fsSL https://claude.ai/install.sh | bash
 #   No node/npm dependency as of 2025-05.
+#
+# GitHub SSH:
+#   Generates an ed25519 key at ~/.ssh/id_ed25519 if one doesn't exist.
+#   Pauses to let you add the public key to github.com/settings/ssh/new.
+#   After confirming auth, switches the current repo remote from HTTPS to SSH
+#   if it was cloned over HTTPS.
